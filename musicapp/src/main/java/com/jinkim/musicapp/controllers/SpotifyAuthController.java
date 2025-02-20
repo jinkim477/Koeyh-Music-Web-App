@@ -37,23 +37,22 @@ public class SpotifyAuthController {
 
     // Step 1: Redirect users to Spotify's login page
     @GetMapping("/login")
-    public ResponseEntity<Map<String, String>> login() {
-        String authUrl = UriComponentsBuilder
-                .fromUriString("https://accounts.spotify.com/authorize")
-                .queryParam("client_id", clientId)
-                .queryParam("response_type", "code")
-                .queryParam("redirect_uri", redirectUri)
-                .queryParam("scope", "user-read-email user-read-private") // Add more scopes if needed
-                .toUriString();
+    public ResponseEntity<Void> login() {
+        String spotifyAuthUrl = "https://accounts.spotify.com/authorize"
+                + "?client_id=" + clientId
+                + "&response_type=code"
+                + "&redirect_uri=" + redirectUri
+                + "&scope=user-read-private%20user-read-email%20playlist-modify-public%20playlist-modify-private";
 
-        Map<String, String> response = new HashMap<>();
-        response.put("authUrl", authUrl);
-        return ResponseEntity.ok(response);
+        // Redirect directly instead of returning the URL
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .header("Location", spotifyAuthUrl)
+                .build();
     }
 
     // Step 2: Handle the callback after user logs in
     @GetMapping("/callback")
-    public ResponseEntity<String> callback(@RequestParam("code") String code) {
+    public ResponseEntity<Void> callback(@RequestParam("code") String code) {
         // Spotify token URL
         String tokenUrl = "https://accounts.spotify.com/api/token";
 
@@ -74,11 +73,13 @@ public class SpotifyAuthController {
         ResponseEntity<Map> response = restTemplate.exchange(tokenUrl, HttpMethod.POST, request, Map.class);
         Map<String, Object> responseBody = response.getBody();
 
-        if (responseBody == null || !responseBody.containsKey("access_token")) {
-            return ResponseEntity.badRequest().body("Failed to authenticate with Spotify.");
+        if (responseBody == null || !responseBody.containsKey("access_token")
+                || !responseBody.containsKey("refresh_token")) {
+            return ResponseEntity.badRequest().build();
         }
 
         String accessToken = (String) responseBody.get("access_token");
+        String refreshToken = (String) responseBody.get("refresh_token");
 
         // Fetch user profile using the access token
         HttpHeaders userHeaders = new HttpHeaders();
@@ -89,12 +90,11 @@ public class SpotifyAuthController {
                 "https://api.spotify.com/v1/me",
                 HttpMethod.GET,
                 userRequest,
-                Map.class
-        );
+                Map.class);
 
         Map<String, Object> userProfile = userResponse.getBody();
         if (userProfile == null) {
-            return ResponseEntity.badRequest().body("Failed to fetch user profile.");
+            return ResponseEntity.badRequest().build();
         }
 
         String spotifyId = (String) userProfile.get("id");
@@ -102,7 +102,9 @@ public class SpotifyAuthController {
         String email = (String) userProfile.get("email");
         String profilePicture = "";
 
-        if (userProfile.containsKey("images") && userProfile.get("images") instanceof List<?> imagesList && !imagesList.isEmpty()) {
+        // Check for profile picture
+        if (userProfile.containsKey("images") && userProfile.get("images") instanceof List<?> imagesList
+                && !imagesList.isEmpty()) {
             Map<String, String> firstImage = (Map<String, String>) imagesList.get(0);
             profilePicture = firstImage.get("url");
         }
@@ -113,6 +115,44 @@ public class SpotifyAuthController {
 
         userService.createOrUpdateUser(user);
 
-        return ResponseEntity.ok("Successfully authenticated! You can now use the app.");
+        // Redirect to frontend with tokens
+        String redirectUrl = "http://localhost:3000/callback"
+                + "?access_token=" + accessToken
+                + "&refresh_token=" + refreshToken;
+
+        return ResponseEntity.status(HttpStatus.FOUND)
+                .header("Location", redirectUrl)
+                .build();
+    }
+
+    // Step 3: Refresh access token
+    @GetMapping("/refresh")
+    public ResponseEntity<Map<String, String>> refreshAccessToken(@RequestParam String refreshToken) {
+        String tokenUrl = "https://accounts.spotify.com/api/token";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
+
+        MultiValueMap<String, String> body = new LinkedMultiValueMap<>();
+        body.add("grant_type", "refresh_token");
+        body.add("refresh_token", refreshToken);
+        body.add("client_id", clientId);
+        body.add("client_secret", clientSecret);
+
+        HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(body, headers);
+
+        ResponseEntity<Map> response = restTemplate.postForEntity(tokenUrl, request, Map.class);
+        Map<String, Object> responseBody = response.getBody();
+
+        if (responseBody == null || !responseBody.containsKey("access_token")) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Failed to refresh token."));
+        }
+
+        String newAccessToken = (String) responseBody.get("access_token");
+
+        Map<String, String> tokens = new HashMap<>();
+        tokens.put("access_token", newAccessToken);
+
+        return ResponseEntity.ok(tokens);
     }
 }
