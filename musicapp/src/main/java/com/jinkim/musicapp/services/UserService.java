@@ -12,9 +12,14 @@ import com.jinkim.musicapp.repositories.UserRepository;
 public class UserService {
     @Autowired
     private UserRepository userRepository;
-    
+
     public Optional<User> getUserBySpotifyId(String spotifyId) {
         return userRepository.findBySpotifyId(spotifyId);
+    }
+
+    // Find user by access token
+    public Optional<User> getUserByAccessToken(String accessToken) {
+        return userRepository.findByAccessToken(accessToken);
     }
 
     public User createOrUpdateUser(User user) {

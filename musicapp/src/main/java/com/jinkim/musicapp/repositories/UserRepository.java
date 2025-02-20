@@ -14,6 +14,7 @@ public interface UserRepository extends MongoRepository<User, String>{
     // 4. deleteById - delete a user by mongodb objectid
 
     Optional<User> findBySpotifyId(String spotifyId); // find a user by their spotify id\
+    Optional<User> findByAccessToken(String accessToken);  // New method
 
     // might add findByName(String name)
 }
